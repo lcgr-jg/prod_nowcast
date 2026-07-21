@@ -4,3 +4,4 @@ python-dotenv>=1.0
 duckdb>=1.0
 matplotlib>=3.8
 plotly>=5.0
+pygwalker>=0.4
