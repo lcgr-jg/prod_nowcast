@@ -8,7 +8,10 @@ __pycache__/
 Raw Data/
 Archive/
 data/
+!data/manual/
+!data/manual/**
 *.csv
+!data/manual/*.csv
 *.parquet
 *.duckdb
 *.duckdb.wal

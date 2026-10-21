@@ -3,7 +3,7 @@ Build a global terminal catalog from the DuckDB trades store.
 
 One row per installation (prefer Kpler installation id), with import/export
 activity, product mix, partner countries, and empty enrichment columns for
-later desk research (demand centers, pipeline links, regions covered).
+later desk research (pipeline links, regions covered, lat/lon).
 
 Usage:
     python build_terminal_catalog.py
@@ -21,13 +21,13 @@ import duckdb
 import pandas as pd
 
 from kpler_store import DB_PATH, DATA_DIR, _read_csv_sql, year_csv_paths
+from terminal_desk import DESK_MAP_PATH, upsert_desk_map
 
 OUT_DIR = DATA_DIR / "derived"
 ROOT = Path(__file__).resolve().parent
 TERMINALS_PATH = OUT_DIR / "terminals.parquet"
 PRODUCTS_PATH = OUT_DIR / "terminal_products.parquet"
 PARTNERS_PATH = OUT_DIR / "terminal_partners.parquet"
-ENRICHMENT_TEMPLATE = OUT_DIR / "terminals_enrichment_template.csv"
 # Full wide CSV (all terminal cols + product/partner summaries)
 TERMINALS_CSV = OUT_DIR / "terminals.csv"
 TERMINALS_FULL_CSV = OUT_DIR / "terminals_full.csv"
@@ -232,7 +232,6 @@ def build_catalog(
     terminals["last_seen"] = terminals[["last_export", "last_import"]].max(axis=1)
 
     # Enrichment placeholders for desk research / later joins
-    terminals["demand_centers"] = pd.NA  # free text / JSON later
     terminals["regions_covered"] = pd.NA
     terminals["pipeline_connected"] = pd.NA  # True/False/Unknown
     terminals["pipeline_names"] = pd.NA
@@ -256,7 +255,6 @@ def build_catalog(
         "import_trades",
         "first_seen",
         "last_seen",
-        "demand_centers",
         "regions_covered",
         "pipeline_connected",
         "pipeline_names",
@@ -491,22 +489,8 @@ def write_outputs(tables: dict[str, pd.DataFrame]) -> None:
     except PermissionError:
         print(f"skip (locked): {NOTEBOOKS_CAT_CSV}")
 
-    # Lightweight template for manual enrichment (merge later on terminal_key)
-    enrich_cols = [
-        "terminal_key",
-        "installation_id",
-        "installation_name",
-        "country",
-        "demand_centers",
-        "regions_covered",
-        "pipeline_connected",
-        "pipeline_names",
-        "lat",
-        "lon",
-        "notes",
-    ]
-    tmpl = tables["terminals"][enrich_cols].copy()
-    tmpl.to_csv(ENRICHMENT_TEMPLATE, index=False)
+    # Desk map: scaffold from Kpler; preserve manual owner/complex/enrichment edits
+    desk_path = upsert_desk_map(tables["terminals"])
 
     meta = {
         "terminals": len(tables["terminals"]),
@@ -521,7 +505,7 @@ def write_outputs(tables: dict[str, pd.DataFrame]) -> None:
             "notebooks_terminal_cat_csv": str(NOTEBOOKS_CAT_CSV),
             "products_csv": str(PRODUCTS_CSV),
             "partners_csv": str(PARTNERS_CSV),
-            "enrichment_template": str(ENRICHMENT_TEMPLATE),
+            "desk_map": str(desk_path),
         },
     }
     (OUT_DIR / "terminal_catalog_meta.json").write_text(

@@ -1,0 +1,167 @@
+def plot_od_sankey(
+    edges: pd.DataFrame,
+    *,
+    title: str,
+    top_n: int = OD_SANKEY_TOP_N,
+    source_col: str = "origin_installation",
+    target_col: str = "dest_installation",
+    value_col: str = "kb",
+    label_col: str = "Product",
+    show_country: bool = False,
+) -> go.Figure:
+    """Compact Sankey: top_n links, node labels = installation (+ owner if mapped)."""
+    plot_df = edges.nlargest(top_n, value_col).copy()
+    if plot_df.empty:
+        fig = go.Figure()
+        fig.update_layout(title=title + " (no edges)")
+        return fig
+
+    def _node_label(inst: str, owner: str, country: str | None = None) -> str:
+        base = f"{inst} [{owner}]" if owner and owner != "(unmapped)" else str(inst)
+        if show_country and country:
+            return f"{base} ({country})"
+        return base
+
+    nodes = pd.Index(
+        pd.concat([plot_df[source_col], plot_df[target_col]], ignore_index=True).unique()
+    )
+    node_map = {n: i for i, n in enumerate(nodes)}
+
+    owner_lookup = (
+        pd.concat(
+            [
+                plot_df[[source_col, "origin_owner"]].rename(
+                    columns={source_col: "installation", "origin_owner": "owner"}
+                ),
+                plot_df[[target_col, "dest_owner"]].rename(
+                    columns={target_col: "installation", "dest_owner": "owner"}
+                ),
+            ],
+            ignore_index=True,
+        )
+        .drop_duplicates("installation")
+        .set_index("installation")["owner"]
+    )
+    country_lookup = {}
+    if show_country:
+        country_lookup = (
+            pd.concat(
+                [
+                    plot_df[[source_col, "origin_country"]].rename(
+                        columns={
+                            source_col: "installation",
+                            "origin_country": "country",
+                        }
+                    ),
+                    plot_df[[target_col, "dest_country"]].rename(
+                        columns={
+                            target_col: "installation",
+                            "dest_country": "country",
+                        }
+                    ),
+                ],
+                ignore_index=True,
+            )
+            .drop_duplicates("installation")
+            .set_index("installation")["country"]
+            .to_dict()
+        )
+    labels = [
+        _node_label(
+            n,
+            owner_lookup.get(n, "(unmapped)"),
+            country_lookup.get(n),
+        )
+        for n in nodes
+    ]
+
+    link_colors = []
+    for fc in plot_df["flow_class"]:
+        c = FLOW_CLASS_COLORS.get(fc, "#9ca3af")
+        if isinstance(c, str) and c.startswith("#") and len(c) == 7:
+            link_colors.append(
+                f"rgba({int(c[1:3], 16)},{int(c[3:5], 16)},{int(c[5:7], 16)},0.45)"
+            )
+        else:
+            link_colors.append("rgba(156,163,175,0.45)")
+
+    fig = go.Figure(
+        data=[
+            go.Sankey(
+                arrangement="snap",
+                node=dict(
+                    pad=14,
+                    thickness=14,
+                    line=dict(color="#374151", width=0.5),
+                    label=labels,
+                    color="#e5e7eb",
+                ),
+                link=dict(
+                    source=plot_df[source_col].map(node_map),
+                    target=plot_df[target_col].map(node_map),
+                    value=plot_df[value_col],
+                    label=(
+                        plot_df[label_col].astype(str)
+                        + " · "
+                        + plot_df["flow_class"].astype(str)
+                        + " · "
+                        + plot_df[value_col].round(0).astype(int).astype(str)
+                        + " kb"
+                    ),
+                    color=link_colors,
+                ),
+            )
+        ]
+    )
+    fig.update_layout(
+        title=title,
+        font=dict(size=11),
+        height=650,
+        margin=dict(l=20, r=20, t=60, b=20),
+    )
+    return fig
+
+
+owner_label = OD_FOCUS_OWNER or "all owners"
+fig_sankey = plot_od_sankey(
+    od_view,
+    title=(
+        f"{OD_ORIGIN_COUNTRY} outbound domestic OD Sankey — {owner_label} "
+        f"(top {OD_SANKEY_TOP_N} edges >= {OD_MIN_EDGE_KB:g} kb)"
+    ),
+)
+fig_sankey.show()
+
+# Product-split Sankeys for the focus owner (keeps each chart readable)
+if OD_FOCUS_OWNER and OD_PRODUCTS:
+    for prod in OD_PRODUCTS:
+        sub = od_view.loc[od_view["Product"].eq(prod)]
+        if sub.empty:
+            continue
+        fig_p = plot_od_sankey(
+            sub,
+            title=f"{OD_ORIGIN_COUNTRY} · {OD_FOCUS_OWNER} · {prod}",
+            top_n=min(15, OD_SANKEY_TOP_N),
+        )
+        fig_p.show()
+
+# Outbound cross-border: Spain origin → foreign destination (exports).
+fig_sankey_intl = plot_od_sankey(
+    od_view_intl,
+    title=(
+        f"{OD_ORIGIN_COUNTRY} outbound cross-border OD Sankey — {owner_label} "
+        f"(top {OD_SANKEY_TOP_N} edges >= {OD_MIN_EDGE_KB:g} kb)"
+    ),
+)
+fig_sankey_intl.show()
+
+# Inbound cross-border: foreign origin → Spain destination (imports).
+fig_sankey_inbound = plot_od_sankey(
+    od_view_inbound_intl,
+    title=(
+        f"Into {OD_ORIGIN_COUNTRY} inbound cross-border OD Sankey — {owner_label} "
+        f"(top {OD_SANKEY_TOP_N} edges >= {OD_MIN_EDGE_KB:g} kb)"
+    ),
+    show_country=True,
+)
+fig_sankey_inbound.show()

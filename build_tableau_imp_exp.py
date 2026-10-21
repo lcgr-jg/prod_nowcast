@@ -8,6 +8,7 @@ Each delivered trade×product becomes two rows with normalized location columns:
 Adds:
   - "Imp/Exp": Export | Import
   - kb_imp_exp: Volume (bbl) / 1000, positive for exports, negative for imports
+  - same_country: true when origin and destination countries are both known and equal
 
 Default filters match the terminal catalog: Trade status = Delivered, exclude
 crude/condensate (Dirty / Crude / Condensate / Crude/Co).
@@ -60,6 +61,9 @@ MASTER_COLUMNS = [
     "Buyer",
     "Vessel Owner",
     "Vessel Owner 2",
+    "origin_country",
+    "destination_country",
+    "same_country",
 ]
 
 
@@ -121,7 +125,15 @@ def master_sql(status: str) -> str:
       "Seller (origin)" AS Seller,
       "Buyer (destination)" AS Buyer,
       "Vessel Owner",
-      "Vessel Owner 2"
+      "Vessel Owner 2",
+      "Country (origin)" AS origin_country,
+      "Country (destination)" AS destination_country,
+      -- True only when both countries are known and match (Tableau domestic filter)
+      (
+        "Country (origin)" = "Country (destination)"
+        AND "Country (origin)" IS NOT NULL
+        AND "Country (destination)" IS NOT NULL
+      ) AS same_country,
     FROM trades
     WHERE "Trade status" = '{status}'
       {crude}
@@ -153,7 +165,14 @@ def master_sql(status: str) -> str:
       "Seller (origin)" AS Seller,
       "Buyer (destination)" AS Buyer,
       "Vessel Owner",
-      "Vessel Owner 2"
+      "Vessel Owner 2",
+      "Country (origin)" AS origin_country,
+      "Country (destination)" AS destination_country,
+      (
+        "Country (origin)" = "Country (destination)"
+        AND "Country (origin)" IS NOT NULL
+        AND "Country (destination)" IS NOT NULL
+      ) AS same_country,
     FROM trades
     WHERE "Trade status" = '{status}'
       {crude}
@@ -224,6 +243,7 @@ def build(
             "tableau_tips": [
                 "Filter Country / Installation / Zone for the selected location.",
                 "Use Imp/Exp to split imports vs exports.",
+                "Filter same_country = false to drop domestic (intra-country) trades.",
                 "SUM(kb_imp_exp) = net export (kb); do not SUM Volume across both directions without Imp/Exp.",
             ],
         }
